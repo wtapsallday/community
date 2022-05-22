@@ -20,6 +20,10 @@ public class MapperTests {
     @Autowired
     private UserMapper userMapper;
 
+<<<<<<< HEAD
+=======
+    //自动装配
+>>>>>>> 9c9f36a (初始提交，搭建好了项目初始界面)
     @Autowired
     private DiscussPostMapper discussPostMapper;
     @Test
