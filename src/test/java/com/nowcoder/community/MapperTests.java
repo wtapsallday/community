@@ -18,7 +18,7 @@ import java.util.List;
 @ContextConfiguration(classes = CommunityApplication.class)
 public class MapperTests {
 
-    //
+    //shada
     @Autowired
     private UserMapper userMapper;
 
