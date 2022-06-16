@@ -4,12 +4,16 @@ import com.google.code.kaptcha.Producer;
 import com.nowcoder.community.entity.User;
 import com.nowcoder.community.service.UserService;
 import com.nowcoder.community.util.CommunityConstant;
+import com.nowcoder.community.util.CommunityUtil;
+import com.nowcoder.community.util.RedisKeyUtil;
 import com.sun.org.apache.xpath.internal.operations.Mod;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +27,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Controller
 public class loginController implements CommunityConstant {
@@ -31,6 +36,9 @@ public class loginController implements CommunityConstant {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
 
     @Autowired
     private Producer kaptchaProducer;
@@ -85,21 +93,31 @@ public class loginController implements CommunityConstant {
 
     @RequestMapping(path = "/kaptcha", method = RequestMethod.GET)
     //实际登录的时候，先生成验证码，然后服务端保存，然后服务端验证输入的验证码是否与输入分验证码一致，一致才登陆成功，验证码由session保存
-    public void getKaptcha(HttpServletResponse response, HttpSession session){
-        //生成验证码
+    public void getKaptcha(HttpServletResponse response/*, HttpSession session*/) {
+        // 生成验证码
         String text = kaptchaProducer.createText();
         BufferedImage image = kaptchaProducer.createImage(text);
 
-        //将验证码存入session
-        session.setAttribute("kaptcha", text);
+        // 将验证码存入session
+        // session.setAttribute("kaptcha", text);
 
-        //将图片输出给浏览器
+        // 验证码的归属
+        String kaptchaOwner = CommunityUtil.generateUUID();
+        Cookie cookie = new Cookie("kaptchaOwner", kaptchaOwner);
+        cookie.setMaxAge(60);
+        cookie.setPath(contextPath);
+        response.addCookie(cookie);
+        // 将验证码存入Redis
+        String redisKey = RedisKeyUtil.getKaptchaKey(kaptchaOwner);
+        redisTemplate.opsForValue().set(redisKey, text, 60, TimeUnit.SECONDS);
+
+        // 将突图片输出给浏览器
         response.setContentType("image/png");
         try {
             OutputStream os = response.getOutputStream();
             ImageIO.write(image, "png", os);
         } catch (IOException e) {
-            logger.error("响应验证码失败", e.getMessage());
+            logger.error("响应验证码失败:" + e.getMessage());
         }
     }
 
@@ -115,10 +133,17 @@ public class loginController implements CommunityConstant {
      * @return
      */
     @RequestMapping(path = "/login", method = RequestMethod.POST)
-    public String login(String username, String password, String code/*验证码*/, boolean rememberme/*记住我*/,
-                        Model model, HttpSession session/*检查验证码，因为验证码保存在cookie里*/, HttpServletResponse response) {
+    public String login(String username, String password, String code, boolean rememberme,
+                        Model model, /*HttpSession session, */HttpServletResponse response,
+                        @CookieValue("kaptchaOwner") String kaptchaOwner) {
         // 检查验证码
-        String kaptcha = (String) session.getAttribute("kaptcha");
+        // String kaptcha = (String) session.getAttribute("kaptcha");
+        String kaptcha = null;
+        if (StringUtils.isNotBlank(kaptchaOwner)) {
+            String redisKey = RedisKeyUtil.getKaptchaKey(kaptchaOwner);
+            kaptcha = (String) redisTemplate.opsForValue().get(redisKey);
+        }
+
         if (StringUtils.isBlank(kaptcha) || StringUtils.isBlank(code) || !kaptcha.equalsIgnoreCase(code)) {
             model.addAttribute("codeMsg", "验证码不正确!");
             return "/site/login";
@@ -143,6 +168,7 @@ public class loginController implements CommunityConstant {
     @RequestMapping(path = "/logout", method = RequestMethod.GET)
     public String logout(@CookieValue("ticket") String ticket) {
         userService.logout(ticket);
+        SecurityContextHolder.clearContext();
         return "redirect:/login";
     }
 }
